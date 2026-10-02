@@ -4,12 +4,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import tools.jackson.databind.exc.InvalidFormatException;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -32,6 +35,22 @@ public class ApiExceptionHandler {
         return ResponseEntity.badRequest().body(problem);
     }
 
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ProblemDetail> handleUnreadableRequest(HttpMessageNotReadableException exception) {
+        if (hasInvalidRecipeType(exception)) {
+            ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                    HttpStatus.BAD_REQUEST, "Recipe type must be FISH, MEAT, or VEGETABLE.");
+            problem.setTitle("Validation failed");
+            problem.setProperty("errors", Map.of("type", "must be FISH, MEAT, or VEGETABLE"));
+            return ResponseEntity.badRequest().body(problem);
+        }
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, "Request body could not be parsed.");
+        problem.setTitle("Invalid request body");
+        return ResponseEntity.badRequest().body(problem);
+    }
+
     @ExceptionHandler(RecipeNotFoundException.class)
     public ResponseEntity<ProblemDetail> handleRecipeNotFound(RecipeNotFoundException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "Recipe not found.");
@@ -46,5 +65,17 @@ public class ApiExceptionHandler {
                 HttpStatus.INTERNAL_SERVER_ERROR, "The requested operation could not be completed.");
         problem.setTitle("Persistence failure");
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(problem);
+    }
+
+    private boolean hasInvalidRecipeType(Throwable exception) {
+        Throwable cause = exception;
+        while (cause != null) {
+            if (cause instanceof InvalidFormatException invalidFormat
+                    && RecipeType.class.equals(invalidFormat.getTargetType())) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 }

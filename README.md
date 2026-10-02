@@ -20,10 +20,11 @@ Flyway creates the schema at startup. Create a recipe title with:
 ```sh
 curl -i -X POST http://localhost:8080/api/recipes \
   -H 'Content-Type: application/json' \
-  -d '{"title":"Miso soup"}'
+  -d '{"title":"Miso soup","type":"VEGETABLE"}'
 ```
 
 A successful request returns `201 Created` with the saved ID and title. Titles are trimmed, must not be blank, and may contain at most 200 characters. Duplicate titles are allowed.
+The `type` field is required and must be `FISH`, `MEAT`, or `VEGETABLE`.
 
 Retrieve a recipe by its unique ID:
 
@@ -51,7 +52,7 @@ Inspect saved rows with:
 
 ```sh
 docker compose exec postgres psql -U menuizer -d menuizer \
-  -c 'SELECT id, title FROM recipes ORDER BY id;'
+  -c 'SELECT id, title, recipe_type FROM recipes ORDER BY id;'
 ```
 
 Stop the app with `Ctrl+C`. Stop PostgreSQL with `docker compose down`; its named volume retains saved titles. Do not use `docker compose down -v` when you need to preserve the data. The default database credentials must not be used outside local development; configure production credentials through a secret manager or deployment environment.

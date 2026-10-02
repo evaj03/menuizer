@@ -12,8 +12,8 @@ public class RecipeService {
         this.repository = repository;
     }
 
-    public Recipe create(String title) {
-        return repository.save(new Recipe(null, title));
+    public Recipe create(String title, RecipeType type) {
+        return repository.save(new Recipe(null, title, type));
     }
 
     public void delete(Long id) {

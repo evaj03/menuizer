@@ -44,13 +44,15 @@ class AppTest {
     void recipeTitleIsTrimmedAndPersisted() throws Exception {
         mockMvc.perform(post("/api/recipes")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"  Miso soup  \"}"))
+                .content("{\"title\":\"  Miso soup  \",\"type\":\"FISH\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").isNumber())
-                .andExpect(jsonPath("$.title").value("Miso soup"));
+            .andExpect(jsonPath("$.title").value("Miso soup"))
+            .andExpect(jsonPath("$.type").value("FISH"));
 
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM recipes WHERE title = ?", Integer.class, "Miso soup");
+            "SELECT COUNT(*) FROM recipes WHERE title = ? AND recipe_type = ?",
+            Integer.class, "Miso soup", "FISH");
         org.junit.jupiter.api.Assertions.assertEquals(1, count);
     }
 
@@ -58,7 +60,7 @@ class AppTest {
     void blankTitleIsRejected() throws Exception {
         mockMvc.perform(post("/api/recipes")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"   \"}"))
+                        .content("{\"title\":\"   \",\"type\":\"MEAT\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors.title").exists());
     }
@@ -68,19 +70,20 @@ class AppTest {
         String title = "a".repeat(201);
         mockMvc.perform(post("/api/recipes")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"" + title + "\"}"))
+                        .content("{\"title\":\"" + title + "\",\"type\":\"VEGETABLE\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors.title").exists());
     }
 
     @Test
     void recipeCanBeRetrievedById() throws Exception {
-        Long id = createRecipe("Lookup by id");
+        Long id = createRecipe("Lookup by id", RecipeType.MEAT);
 
         mockMvc.perform(get("/api/recipes/{id}", id))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id.intValue()))
-                .andExpect(jsonPath("$.title").value("Lookup by id"));
+            .andExpect(jsonPath("$.title").value("Lookup by id"))
+            .andExpect(jsonPath("$.type").value("MEAT"));
     }
 
     @Test
@@ -99,16 +102,59 @@ class AppTest {
 
     @Test
     void titleSearchIsCaseInsensitiveAndReturnsAllMatchesInIdOrder() throws Exception {
-        Long firstId = createRecipe("SearchMarker creamy soup");
-        Long secondId = createRecipe("searchmarker pasta");
+        Long firstId = createRecipe("SearchMarker creamy soup", RecipeType.FISH);
+        Long secondId = createRecipe("searchmarker pasta", RecipeType.VEGETABLE);
 
         mockMvc.perform(get("/api/recipes").param("title", "  SEARCHMARKER  "))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].id").value(firstId.intValue()))
                 .andExpect(jsonPath("$[0].title").value("SearchMarker creamy soup"))
+                .andExpect(jsonPath("$[0].type").value("FISH"))
                 .andExpect(jsonPath("$[1].id").value(secondId.intValue()))
-                .andExpect(jsonPath("$[1].title").value("searchmarker pasta"));
+                .andExpect(jsonPath("$[1].title").value("searchmarker pasta"))
+                .andExpect(jsonPath("$[1].type").value("VEGETABLE"));
+    }
+
+    @Test
+    void everyRecipeTypeCanBeCreatedAndPersisted() throws Exception {
+        for (RecipeType type : RecipeType.values()) {
+            createRecipe("Type test " + type, type);
+        }
+
+        for (RecipeType type : RecipeType.values()) {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM recipes WHERE title = ? AND recipe_type = ?",
+                    Integer.class, "Type test " + type, type.name());
+            org.junit.jupiter.api.Assertions.assertEquals(1, count);
+        }
+    }
+
+    @Test
+    void recipeTypeIsRequired() throws Exception {
+        mockMvc.perform(post("/api/recipes")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"Missing type\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.type").exists());
+    }
+
+    @Test
+    void nullRecipeTypeIsRejected() throws Exception {
+        mockMvc.perform(post("/api/recipes")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"Null type\",\"type\":null}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.type").exists());
+    }
+
+    @Test
+    void unsupportedRecipeTypeIsRejectedWithFieldError() throws Exception {
+        mockMvc.perform(post("/api/recipes")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"Unsupported type\",\"type\":\"GRAIN\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.type").exists());
     }
 
     @Test
@@ -170,11 +216,18 @@ class AppTest {
     }
 
     private Long createRecipe(String title) throws Exception {
+        return createRecipe(title, RecipeType.VEGETABLE);
+        }
+
+        private Long createRecipe(String title, RecipeType type) throws Exception {
         mockMvc.perform(post("/api/recipes")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"" + title + "\"}"))
-                .andExpect(status().isCreated());
-        return jdbcTemplate.queryForObject("SELECT id FROM recipes WHERE title = ?", Long.class, title);
+                .content("{\"title\":\"" + title + "\",\"type\":\"" + type + "\"}"))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.type").value(type.name()));
+        return jdbcTemplate.queryForObject(
+            "SELECT id FROM recipes WHERE title = ? AND recipe_type = ? ORDER BY id DESC LIMIT 1",
+            Long.class, title, type.name());
     }
 
     private Integer countRecipe(Long id) {

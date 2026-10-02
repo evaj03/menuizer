@@ -26,7 +26,7 @@ public class RecipeController {
 
     @PostMapping
     public ResponseEntity<RecipeResponse> create(@Valid @RequestBody CreateRecipeRequest request) {
-        Recipe recipe = recipeService.create(request.title());
+        Recipe recipe = recipeService.create(request.title(), request.type());
         return ResponseEntity.status(HttpStatus.CREATED).body(RecipeResponse.from(recipe));
     }
 
