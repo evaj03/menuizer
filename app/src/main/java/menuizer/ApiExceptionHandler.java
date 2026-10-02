@@ -25,14 +25,27 @@ public class ApiExceptionHandler {
     public ResponseEntity<ProblemDetail> handleValidation(MethodArgumentNotValidException exception) {
         Map<String, String> errors = exception.getBindingResult().getFieldErrors().stream()
                 .collect(Collectors.toMap(
-                        error -> error.getField(),
+                error -> error.getField().equals("countsTotalValid") ? "counts" : error.getField(),
                         error -> error.getDefaultMessage() == null ? "Invalid value" : error.getDefaultMessage(),
                         (first, second) -> first,
                         LinkedHashMap::new));
+                exception.getBindingResult().getGlobalErrors().forEach(error -> errors.putIfAbsent(
+                    "counts", error.getDefaultMessage() == null ? "Invalid count combination" : error.getDefaultMessage()));
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Request validation failed.");
         problem.setTitle("Validation failed");
         problem.setProperty("errors", errors);
         return ResponseEntity.badRequest().body(problem);
+    }
+
+    @ExceptionHandler(MenuInventoryShortageException.class)
+    public ResponseEntity<ProblemDetail> handleMenuInventoryShortage(MenuInventoryShortageException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT, "There are not enough recipes to satisfy the requested menu.");
+        problem.setTitle("Insufficient recipe inventory");
+        problem.setProperty("recipeType", exception.getRecipeType());
+        problem.setProperty("requested", exception.getRequested());
+        problem.setProperty("available", exception.getAvailable());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

@@ -40,6 +40,16 @@ curl -i --get http://localhost:8080/api/recipes --data-urlencode 'title=soup'
 
 The ID endpoint returns one recipe with `200 OK`, or `404 Not Found` for an unknown ID. Title search returns all matching recipes in ID order, or `200 OK` with an empty array when there are no matches. The search term is trimmed, required, and limited to 200 characters; invalid terms return `400 Bad Request`.
 
+Generate a seven-day menu with two fish, two meat, and three vegetable recipes:
+
+```sh
+curl -i -X POST http://localhost:8080/api/menus \
+  -H 'Content-Type: application/json' \
+  -d '{"days":7,"fish":2,"meat":2,"vegetable":3}'
+```
+
+The request counts must be nonnegative, `days` must be between 1 and 31, and the three recipe counts must sum exactly to `days`. The API randomly selects distinct stored recipe rows, shuffles their day order, and returns a read-only menu with `total` equal to the number of days. If a requested type has too few stored recipes, the request returns `409 Conflict` without a partial menu.
+
 Delete a recipe by its ID:
 
 ```sh

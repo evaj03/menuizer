@@ -6,7 +6,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -39,6 +41,11 @@ class AppTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @BeforeEach
+    void clearRecipes() {
+        jdbcTemplate.execute("TRUNCATE TABLE recipes RESTART IDENTITY");
+    }
 
     @Test
     void recipeTitleIsTrimmedAndPersisted() throws Exception {
@@ -178,6 +185,90 @@ class AppTest {
                 .andExpect(jsonPath("$.errors.title").exists());
     }
 
+        @Test
+        void menuGenerationReturnsRequestedRecipesForSevenDays() throws Exception {
+        createRecipe("Fish 1", RecipeType.FISH);
+        createRecipe("Fish 2", RecipeType.FISH);
+        createRecipe("Meat 1", RecipeType.MEAT);
+        createRecipe("Meat 2", RecipeType.MEAT);
+        createRecipe("Vegetable 1", RecipeType.VEGETABLE);
+        createRecipe("Vegetable 2", RecipeType.VEGETABLE);
+        createRecipe("Vegetable 3", RecipeType.VEGETABLE);
+        int recipesBefore = countAllRecipes();
+
+        mockMvc.perform(post("/api/menus")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"days\":7,\"fish\":2,\"meat\":2,\"vegetable\":3}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.title").value("Menu Planner"))
+            .andExpect(jsonPath("$.total").value(7))
+            .andExpect(jsonPath("$.recipe.length()").value(7))
+            .andExpect(jsonPath("$.recipe[0].dayIdentifier").value("Day 1"))
+            .andExpect(jsonPath("$.recipe[6].dayIdentifier").value("Day 7"))
+            .andExpect(jsonPath("$.recipe[*].recipeType", containsInAnyOrder(
+                "FISH", "FISH", "MEAT", "MEAT", "VEGETABLE", "VEGETABLE", "VEGETABLE")))
+            .andExpect(jsonPath("$.recipe[*].recipeTitle", containsInAnyOrder(
+                "Fish 1", "Fish 2", "Meat 1", "Meat 2", "Vegetable 1", "Vegetable 2", "Vegetable 3")));
+
+        org.junit.jupiter.api.Assertions.assertEquals(recipesBefore, countAllRecipes());
+        }
+
+        @Test
+        void menuGenerationAllowsZeroCountTypes() throws Exception {
+        createRecipe("Only fish", RecipeType.FISH);
+
+        mockMvc.perform(post("/api/menus")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"days\":1,\"fish\":1,\"meat\":0,\"vegetable\":0}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.total").value(1))
+            .andExpect(jsonPath("$.recipe.length()").value(1))
+            .andExpect(jsonPath("$.recipe[0].recipeType").value("FISH"));
+        }
+
+        @Test
+        void menuGenerationReturnsConflictWhenInventoryIsShort() throws Exception {
+        createRecipe("One fish", RecipeType.FISH);
+        int recipesBefore = countAllRecipes();
+
+        mockMvc.perform(post("/api/menus")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"days\":2,\"fish\":2,\"meat\":0,\"vegetable\":0}"))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.recipeType").value("FISH"))
+            .andExpect(jsonPath("$.requested").value(2))
+            .andExpect(jsonPath("$.available").value(1));
+
+        org.junit.jupiter.api.Assertions.assertEquals(recipesBefore, countAllRecipes());
+        }
+
+        @Test
+        void menuGenerationRejectsMismatchedCounts() throws Exception {
+        mockMvc.perform(post("/api/menus")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"days\":3,\"fish\":1,\"meat\":1,\"vegetable\":0}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.errors.counts").exists());
+        }
+
+        @Test
+        void menuGenerationRejectsNegativeCounts() throws Exception {
+        mockMvc.perform(post("/api/menus")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"days\":1,\"fish\":-1,\"meat\":1,\"vegetable\":1}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.errors.fish").exists());
+        }
+
+        @Test
+        void menuGenerationRequiresAllCounts() throws Exception {
+        mockMvc.perform(post("/api/menus")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"days\":1,\"fish\":1,\"meat\":0}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.errors.vegetable").exists());
+        }
+
     @Test
     void deletingRecipeReturnsNoContentAndLeavesOtherRecipes() throws Exception {
         Long deletedId = createRecipe("Recipe to delete");
@@ -232,5 +323,9 @@ class AppTest {
 
     private Integer countRecipe(Long id) {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM recipes WHERE id = ?", Integer.class, id);
+    }
+
+    private Integer countAllRecipes() {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM recipes", Integer.class);
     }
 }
