@@ -1,6 +1,7 @@
 package menuizer;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -68,6 +69,65 @@ class AppTest {
         mockMvc.perform(post("/api/recipes")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"" + title + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.title").exists());
+    }
+
+    @Test
+    void recipeCanBeRetrievedById() throws Exception {
+        Long id = createRecipe("Lookup by id");
+
+        mockMvc.perform(get("/api/recipes/{id}", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.intValue()))
+                .andExpect(jsonPath("$.title").value("Lookup by id"));
+    }
+
+    @Test
+    void retrievingUnknownIdReturnsNotFound() throws Exception {
+        mockMvc.perform(get("/api/recipes/{id}", Long.MAX_VALUE))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.title").value("Recipe not found"));
+    }
+
+    @Test
+    void retrievingWithNonnumericIdReturnsBadRequest() throws Exception {
+        mockMvc.perform(get("/api/recipes/not-a-number"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void titleSearchIsCaseInsensitiveAndReturnsAllMatchesInIdOrder() throws Exception {
+        Long firstId = createRecipe("SearchMarker creamy soup");
+        Long secondId = createRecipe("searchmarker pasta");
+
+        mockMvc.perform(get("/api/recipes").param("title", "  SEARCHMARKER  "))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].id").value(firstId.intValue()))
+                .andExpect(jsonPath("$[0].title").value("SearchMarker creamy soup"))
+                .andExpect(jsonPath("$[1].id").value(secondId.intValue()))
+                .andExpect(jsonPath("$[1].title").value("searchmarker pasta"));
+    }
+
+    @Test
+    void titleSearchWithoutMatchesReturnsEmptyArray() throws Exception {
+        mockMvc.perform(get("/api/recipes").param("title", "no-matching-recipe-9271"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void titleSearchRequiresNonblankTitle() throws Exception {
+        mockMvc.perform(get("/api/recipes").param("title", "   "))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.title").exists());
+    }
+
+    @Test
+    void titleSearchRejectsTermsLongerThan200Characters() throws Exception {
+        mockMvc.perform(get("/api/recipes").param("title", "a".repeat(201)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors.title").exists());
     }

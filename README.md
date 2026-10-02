@@ -25,6 +25,20 @@ curl -i -X POST http://localhost:8080/api/recipes \
 
 A successful request returns `201 Created` with the saved ID and title. Titles are trimmed, must not be blank, and may contain at most 200 characters. Duplicate titles are allowed.
 
+Retrieve a recipe by its unique ID:
+
+```sh
+curl -i http://localhost:8080/api/recipes/1
+```
+
+Search titles by a case-insensitive substring:
+
+```sh
+curl -i --get http://localhost:8080/api/recipes --data-urlencode 'title=soup'
+```
+
+The ID endpoint returns one recipe with `200 OK`, or `404 Not Found` for an unknown ID. Title search returns all matching recipes in ID order, or `200 OK` with an empty array when there are no matches. The search term is trimmed, required, and limited to 200 characters; invalid terms return `400 Bad Request`.
+
 Delete a recipe by its ID:
 
 ```sh
