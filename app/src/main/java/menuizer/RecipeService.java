@@ -13,4 +13,11 @@ public class RecipeService {
     public Recipe create(String title) {
         return repository.save(new Recipe(null, title));
     }
+
+    public void delete(Long id) {
+        if (!repository.existsById(id)) {
+            throw new RecipeNotFoundException(id);
+        }
+        repository.deleteById(id);
+    }
 }

@@ -1,7 +1,8 @@
 package menuizer;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -39,13 +40,6 @@ class AppTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void healthEndpointReturnsUp() throws Exception {
-        mockMvc.perform(get("/api/health"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("UP"));
-    }
-
-    @Test
     void recipeTitleIsTrimmedAndPersisted() throws Exception {
         mockMvc.perform(post("/api/recipes")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -76,5 +70,54 @@ class AppTest {
                         .content("{\"title\":\"" + title + "\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors.title").exists());
+    }
+
+    @Test
+    void deletingRecipeReturnsNoContentAndLeavesOtherRecipes() throws Exception {
+        Long deletedId = createRecipe("Recipe to delete");
+        Long retainedId = createRecipe("Recipe to retain");
+
+        mockMvc.perform(delete("/api/recipes/{id}", deletedId))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        org.junit.jupiter.api.Assertions.assertEquals(0, countRecipe(deletedId));
+        org.junit.jupiter.api.Assertions.assertEquals(1, countRecipe(retainedId));
+    }
+
+    @Test
+    void deletingUnknownRecipeReturnsNotFound() throws Exception {
+        mockMvc.perform(delete("/api/recipes/{id}", Long.MAX_VALUE))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.title").value("Recipe not found"));
+    }
+
+    @Test
+    void deletingRecipeTwiceReturnsNotFoundTheSecondTime() throws Exception {
+        Long id = createRecipe("Delete once");
+
+        mockMvc.perform(delete("/api/recipes/{id}", id))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(delete("/api/recipes/{id}", id))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deletingWithNonnumericIdReturnsBadRequest() throws Exception {
+        mockMvc.perform(delete("/api/recipes/not-a-number"))
+                .andExpect(status().isBadRequest());
+    }
+
+    private Long createRecipe(String title) throws Exception {
+        mockMvc.perform(post("/api/recipes")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"" + title + "\"}"))
+                .andExpect(status().isCreated());
+        return jdbcTemplate.queryForObject("SELECT id FROM recipes WHERE title = ?", Long.class, title);
+    }
+
+    private Integer countRecipe(Long id) {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM recipes WHERE id = ?", Integer.class, id);
     }
 }

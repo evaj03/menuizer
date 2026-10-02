@@ -32,11 +32,18 @@ public class ApiExceptionHandler {
         return ResponseEntity.badRequest().body(problem);
     }
 
+    @ExceptionHandler(RecipeNotFoundException.class)
+    public ResponseEntity<ProblemDetail> handleRecipeNotFound(RecipeNotFoundException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "Recipe not found.");
+        problem.setTitle("Recipe not found");
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(problem);
+    }
+
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<ProblemDetail> handleDataAccess(DataAccessException exception) {
         logger.error("Recipe persistence failed", exception);
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.INTERNAL_SERVER_ERROR, "The recipe could not be saved.");
+                HttpStatus.INTERNAL_SERVER_ERROR, "The requested operation could not be completed.");
         problem.setTitle("Persistence failure");
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(problem);
     }
