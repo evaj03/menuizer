@@ -2,18 +2,52 @@
 
 Menuizer is a Spring Boot API. Recipe titles are stored in PostgreSQL.
 
-## Local Run
+## Run from the Command Line
 
-Start PostgreSQL with Docker Compose. The default credentials below are for local development only:
+Install Java 25 and Docker with Docker Compose, and start the Docker daemon. Run the following commands from the project root, in the directory containing `gradlew` and `compose.yaml`.
+
+Set `JAVA_HOME` to your installed JDK 25 directory (replace the placeholder):
 
 ```sh
-docker compose up -d postgres
+export JAVA_HOME=/path/to/jdk-25
+"$JAVA_HOME/bin/java" -version
+```
+
+On macOS, you can instead use `export JAVA_HOME="$(/usr/libexec/java_home -v 25)"` if the JDK is registered with macOS, or `export JAVA_HOME="$(jenv prefix 25)"` if you use jenv.
+
+Start PostgreSQL and set the connection variables in the same terminal where you will launch the app. The default credentials below are for local development only:
+
+```sh
+docker compose up -d --wait postgres
 export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/menuizer
 export SPRING_DATASOURCE_USERNAME=menuizer
 export SPRING_DATASOURCE_PASSWORD=menuizer_local_only
-export JAVA_HOME=/path/to/jdk-25
-./gradlew bootRun
 ```
+
+### Run with Gradle
+
+```sh
+./gradlew :app:bootRun
+```
+
+### Run the Packaged Jar
+
+As an alternative to `bootRun`, build and launch the executable jar using the same environment variables:
+
+```sh
+./gradlew :app:bootJar
+"$JAVA_HOME/bin/java" -jar app/build/libs/app.jar
+```
+
+Use only one launch method at a time. The app listens on `http://localhost:8080`. Leave its terminal running and check it from another terminal:
+
+```sh
+curl -i http://localhost:8080/api/health
+```
+
+The health endpoint returns `200 OK` with `{"status":"UP"}`. Stop the app with `Ctrl+C` before restarting it or switching launch methods. Database connection variables must be set again when using a new terminal.
+
+## API Examples
 
 Flyway creates the schema at startup. Create a recipe title with:
 
@@ -49,6 +83,24 @@ curl -i -X POST http://localhost:8080/api/menus \
 ```
 
 The request counts must be nonnegative, `days` must be between 1 and 31, and the three recipe counts must sum exactly to `days`. The API randomly selects distinct stored recipe rows, shuffles their day order, and returns a read-only menu with `total` equal to the number of days. If a requested type has too few stored recipes, the request returns `409 Conflict` without a partial menu.
+
+Edit a recipe's title, type, or both using its existing ID:
+
+```sh
+curl -i -X PATCH http://localhost:8080/api/recipes/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Roasted vegetables"}'
+
+curl -i -X PATCH http://localhost:8080/api/recipes/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"VEGETABLE"}'
+
+curl -i -X PATCH http://localhost:8080/api/recipes/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Roast cod","type":"FISH"}'
+```
+
+PATCH returns `200 OK` with the saved `id`, `title`, and `type`. Omitted fields remain unchanged. Explicit nulls, an empty update, blank or over-200-character titles, and invalid types return `400 Bad Request`. Titles are trimmed. A missing ID returns `404 Not Found`. Concurrent updates preserve omitted fields; the last edit to the same field wins. IDs cannot be edited, and duplicate titles remain allowed.
 
 Delete a recipe by its ID:
 

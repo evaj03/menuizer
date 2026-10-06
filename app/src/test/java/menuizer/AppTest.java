@@ -2,11 +2,18 @@ package menuizer;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.hamcrest.Matchers.containsInAnyOrder;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +25,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -41,6 +50,12 @@ class AppTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private RecipeService recipeService;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @BeforeEach
     void clearRecipes() {
@@ -306,7 +321,137 @@ class AppTest {
                 .andExpect(status().isBadRequest());
     }
 
-    private Long createRecipe(String title) throws Exception {
+        @Test
+        void titleOnlyUpdatePreservesTypeAndIdAndLeavesOtherRowsUnchanged() throws Exception {
+        Long id = createRecipe("Original soup", RecipeType.FISH);
+        Long neighbor = createRecipe("Neighbor", RecipeType.MEAT);
+
+        mockMvc.perform(patch("/api/recipes/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"  Edited soup  \"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(id.intValue()))
+            .andExpect(jsonPath("$.title").value("Edited soup"))
+            .andExpect(jsonPath("$.type").value("FISH"));
+
+        org.junit.jupiter.api.Assertions.assertEquals("Edited soup", recipeService.findById(id).title());
+        org.junit.jupiter.api.Assertions.assertEquals("Neighbor", recipeService.findById(neighbor).title());
+        org.junit.jupiter.api.Assertions.assertEquals(2, countAllRecipes());
+        mockMvc.perform(get("/api/recipes").param("title", "Edited soup"))
+            .andExpect(jsonPath("$[0].id").value(id.intValue()));
+        mockMvc.perform(get("/api/recipes").param("title", "Original soup"))
+            .andExpect(content().json("[]"));
+        }
+
+        @Test
+        void typeOnlyUpdateIsReflectedInGetAndMenuGeneration() throws Exception {
+        Long id = createRecipe("Edited menu recipe", RecipeType.FISH);
+        mockMvc.perform(patch("/api/recipes/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"type\":\"VEGETABLE\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.title").value("Edited menu recipe"))
+            .andExpect(jsonPath("$.type").value("VEGETABLE"));
+        mockMvc.perform(get("/api/recipes/{id}", id))
+            .andExpect(jsonPath("$.type").value("VEGETABLE"));
+        mockMvc.perform(post("/api/menus")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"days\":1,\"fish\":0,\"meat\":0,\"vegetable\":1}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.recipe[0].recipeTitle").value("Edited menu recipe"))
+            .andExpect(jsonPath("$.recipe[0].recipeType").value("VEGETABLE"));
+        }
+
+        @Test
+        void combinedAndRepeatedUpdatesAllowDuplicateTitles() throws Exception {
+        Long id = createRecipe("Before", RecipeType.FISH);
+        createRecipe("Duplicate", RecipeType.MEAT);
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(patch("/api/recipes/{id}", id)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"title\":\"Duplicate\",\"type\":\"MEAT\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.intValue()))
+                .andExpect(jsonPath("$.title").value("Duplicate"))
+                .andExpect(jsonPath("$.type").value("MEAT"));
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(2, countAllRecipes());
+        }
+
+        @Test
+        void invalidUpdatesLeaveRecipeUnchanged() throws Exception {
+        Long id = createRecipe("Unchanged", RecipeType.FISH);
+        String[] invalidBodies = {
+            "{}", "{\"title\":null}", "{\"type\":null}", "{\"title\":\"   \"}",
+            "{\"title\":\"" + "a".repeat(201) + "\"}",
+            "{\"type\":\"GRAIN\"}", "{\"type\":\"fish\"}", "null", "{"
+        };
+        for (String body : invalidBodies) {
+            mockMvc.perform(patch("/api/recipes/{id}", id)
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+            org.junit.jupiter.api.Assertions.assertEquals(
+                new Recipe(id, "Unchanged", RecipeType.FISH), recipeService.findById(id));
+        }
+        mockMvc.perform(patch("/api/recipes/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(jsonPath("$.errors.request").exists());
+        mockMvc.perform(patch("/api/recipes/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"title\":null}"))
+            .andExpect(jsonPath("$.errors.title").exists());
+        mockMvc.perform(patch("/api/recipes/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"type\":null}"))
+            .andExpect(jsonPath("$.errors.type").exists());
+        }
+
+        @Test
+        void updatingMissingOrDeletedRecipeReturnsNotFoundAndMalformedIdReturnsBadRequest() throws Exception {
+        Long id = createRecipe("Deleted", RecipeType.FISH);
+        recipeService.delete(id);
+        for (Long missingId : new Long[] {id, Long.MAX_VALUE}) {
+            mockMvc.perform(patch("/api/recipes/{id}", missingId)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"Edit\"}"))
+                .andExpect(status().isNotFound());
+        }
+        for (String malformedId : new String[] {"not-a-number", "9223372036854775808"}) {
+            mockMvc.perform(patch("/api/recipes/{id}", malformedId)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"Edit\"}"))
+                .andExpect(status().isBadRequest());
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(0, countAllRecipes());
+        }
+
+        @Test
+        void concurrentPartialEditsRetainBothChanges() throws Exception {
+        Long id = createRecipe("Before concurrent edit", RecipeType.FISH);
+        UpdateRecipeRequest titleEdit = new UpdateRecipeRequest();
+        titleEdit.setTitle("After concurrent edit");
+        UpdateRecipeRequest typeEdit = new UpdateRecipeRequest();
+        typeEdit.setType(RecipeType.MEAT);
+        CountDownLatch secondEditStarted = new CountDownLatch(1);
+        AtomicReference<Future<Recipe>> secondEdit = new AtomicReference<>();
+
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            new TransactionTemplate(transactionManager).executeWithoutResult(transaction -> {
+            recipeService.update(id, titleEdit);
+            secondEdit.set(executor.submit(() -> {
+                secondEditStarted.countDown();
+                return recipeService.update(id, typeEdit);
+            }));
+            try {
+                org.junit.jupiter.api.Assertions.assertTrue(secondEditStarted.await(10, TimeUnit.SECONDS));
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(exception);
+            }
+            });
+            secondEdit.get().get(10, TimeUnit.SECONDS);
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(
+            new Recipe(id, "After concurrent edit", RecipeType.MEAT), recipeService.findById(id));
+        }
+
+        private Long createRecipe(String title) throws Exception {
         return createRecipe(title, RecipeType.VEGETABLE);
         }
 

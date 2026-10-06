@@ -30,7 +30,8 @@ public class ApiExceptionHandler {
                         (first, second) -> first,
                         LinkedHashMap::new));
                 exception.getBindingResult().getGlobalErrors().forEach(error -> errors.putIfAbsent(
-                    "counts", error.getDefaultMessage() == null ? "Invalid count combination" : error.getDefaultMessage()));
+                    exception.getBindingResult().getTarget() instanceof UpdateRecipeRequest ? "request" : "counts",
+                    error.getDefaultMessage() == null ? "Invalid request" : error.getDefaultMessage()));
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Request validation failed.");
         problem.setTitle("Validation failed");
         problem.setProperty("errors", errors);
